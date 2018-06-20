@@ -10,3 +10,43 @@
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+.DS_Store
+# Java class files
+*.class
+*.log
+*.bak
+*.epoch
+.classpath
+.project
+# generated files
+target/
+gen/
+.settings/
+
+# idea ignore
+.idea/
+*.ipr
+*.iml
+*.iws
+
+
+# ipfs can generate profiling dump files
+*.cpuprof
+*.memprof
+
+*.swp
+.ipfsconfig
+*.out
+*.coverprofile
+*.test
+*.orig
+*~
+
+coverage.txt
+gx-workspace-update.json
+
+.ipfs
+bin/gx
+bin/gx*
+bin/tmp
+pkg/*
