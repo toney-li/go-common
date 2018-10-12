@@ -1,34 +1,46 @@
-package logrus
+package logger
 
+//格式如下[LEVEL] [2018-09-09|12:22:13] [module] [line] [msg]
 import (
-	"bytes"
+	"github.com/sirupsen/logrus"
 	"fmt"
+	"time"
+	"bytes"
+	"sync"
 	"sort"
 	"strings"
-	"sync"
-	"time"
+	"github.com/toney-li/go-common/util"
+	"runtime"
 )
 
 const (
-	nocolor = 0
-	red     = 31
-	green   = 32
-	yellow  = 33
-	blue    = 36
-	gray    = 37
+	nocolor                = 0
+	red                    = 31
+	green                  = 32
+	yellow                 = 33
+	blue                   = 36
+	gray                   = 37
+	defaultTimestampFormat = "2006-01-02|15:04:05"
+	FieldKeyModule         = "module"
+	FieldKeyLine           = "Line"
 )
 
 var (
 	baseTimestamp time.Time
-	emptyFieldMap FieldMap
+	emptyFieldMap logrus.FieldMap
 )
 
 func init() {
 	baseTimestamp = time.Now()
 }
 
+type fieldKey string
+
+// FieldMap allows customization of the key names for default fields.
+type FieldMap map[fieldKey]string
+
 // TextFormatter formats logs into text
-type TextFormatter struct {
+type ApacheFormatter struct {
 	// Set to true to bypass checking for a TTY before outputting colors.
 	ForceColors bool
 
@@ -72,14 +84,14 @@ type TextFormatter struct {
 	sync.Once
 }
 
-func (f *TextFormatter) init(entry *Entry) {
+func (f *ApacheFormatter) init(entry *logrus.Entry) {
 	if entry.Logger != nil {
-		f.isTerminal = checkIfTerminal(entry.Logger.Out)
+		f.isTerminal = util.CheckIfTerminal(entry.Logger.Out)
 	}
 }
 
 // Format renders a single log entry
-func (f *TextFormatter) Format(entry *Entry) ([]byte, error) {
+func (f *ApacheFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 	prefixFieldClashes(entry.Data, f.FieldMap)
 
 	keys := make([]string, 0, len(entry.Data))
@@ -109,13 +121,19 @@ func (f *TextFormatter) Format(entry *Entry) ([]byte, error) {
 	if isColored {
 		f.printColored(b, entry, keys, timestampFormat)
 	} else {
+		f.appendKeyValue(b, f.FieldMap.resolve(logrus.FieldKeyLevel), strings.ToUpper(entry.Level.String()))
 		if !f.DisableTimestamp {
-			f.appendKeyValue(b, f.FieldMap.resolve(FieldKeyTime), entry.Time.Format(timestampFormat))
+			f.appendKeyValue(b, f.FieldMap.resolve(logrus.FieldKeyTime), entry.Time.Format(timestampFormat))
 		}
-		f.appendKeyValue(b, f.FieldMap.resolve(FieldKeyLevel), entry.Level.String())
+		pc, _, line, ok := runtime.Caller(6)
+		if ok {
+			f.appendKeyValue(b, f.FieldMap.resolve(FieldKeyModule), runtime.FuncForPC(pc).Name())
+			f.appendKeyValue(b, FieldKeyLine, line)
+		}
 		if entry.Message != "" {
-			f.appendKeyValue(b, f.FieldMap.resolve(FieldKeyMsg), entry.Message)
+			f.appendKeyValue(b, f.FieldMap.resolve(logrus.FieldKeyMsg), entry.Message)
 		}
+
 		for _, key := range keys {
 			f.appendKeyValue(b, key, entry.Data[key])
 		}
@@ -125,14 +143,14 @@ func (f *TextFormatter) Format(entry *Entry) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func (f *TextFormatter) printColored(b *bytes.Buffer, entry *Entry, keys []string, timestampFormat string) {
+func (f *ApacheFormatter) printColored(b *bytes.Buffer, entry *logrus.Entry, keys []string, timestampFormat string) {
 	var levelColor int
 	switch entry.Level {
-	case DebugLevel:
+	case logrus.DebugLevel:
 		levelColor = gray
-	case WarnLevel:
+	case logrus.WarnLevel:
 		levelColor = yellow
-	case ErrorLevel, FatalLevel, PanicLevel:
+	case logrus.ErrorLevel, logrus.FatalLevel, logrus.PanicLevel:
 		levelColor = red
 	default:
 		levelColor = blue
@@ -157,7 +175,7 @@ func (f *TextFormatter) printColored(b *bytes.Buffer, entry *Entry, keys []strin
 	}
 }
 
-func (f *TextFormatter) needsQuoting(text string) bool {
+func (f *ApacheFormatter) needsQuoting(text string) bool {
 	if f.QuoteEmptyFields && len(text) == 0 {
 		return true
 	}
@@ -172,24 +190,52 @@ func (f *TextFormatter) needsQuoting(text string) bool {
 	return false
 }
 
-func (f *TextFormatter) appendKeyValue(b *bytes.Buffer, key string, value interface{}) {
+func (f *ApacheFormatter) appendKeyValue(b *bytes.Buffer, key string, value interface{}) {
 	if b.Len() > 0 {
 		b.WriteByte(' ')
 	}
-	b.WriteString(key)
-	b.WriteByte('=')
+	b.WriteString("[")
+	//if key != logrus.FieldKeyLevel && key != logrus.FieldKeyTime {
+	//	b.WriteString(key)
+	//	b.WriteString("=")
+	//}
 	f.appendValue(b, value)
+	b.WriteString("]")
 }
 
-func (f *TextFormatter) appendValue(b *bytes.Buffer, value interface{}) {
+func (f *ApacheFormatter) appendValue(b *bytes.Buffer, value interface{}) {
 	stringVal, ok := value.(string)
 	if !ok {
 		stringVal = fmt.Sprint(value)
 	}
 
-	if !f.needsQuoting(stringVal) {
-		b.WriteString(stringVal)
-	} else {
-		b.WriteString(fmt.Sprintf("%q", stringVal))
+	//if !f.needsQuoting(stringVal) {
+	b.WriteString(stringVal)
+	//} else {
+	//	b.WriteString(fmt.Sprintf("%q", stringVal))
+	//}
+}
+
+func prefixFieldClashes(data logrus.Fields, fieldMap FieldMap) {
+	timeKey := fieldMap.resolve(logrus.FieldKeyTime)
+	if t, ok := data[timeKey]; ok {
+		data["fields."+timeKey] = t
 	}
+
+	msgKey := fieldMap.resolve(logrus.FieldKeyMsg)
+	if m, ok := data[msgKey]; ok {
+		data["fields."+msgKey] = m
+	}
+
+	levelKey := fieldMap.resolve(logrus.FieldKeyLevel)
+	if l, ok := data[levelKey]; ok {
+		data["fields."+levelKey] = l
+	}
+}
+
+func (f FieldMap) resolve(key fieldKey) string {
+	if k, ok := f[key]; ok {
+		return k
+	}
+	return string(key)
 }

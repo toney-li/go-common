@@ -1,20 +1,26 @@
 package logger
 
 import (
-	log "github.com/sirupsen/logrus"
 	"os"
+	"github.com/sirupsen/logrus"
 )
 
-func New(modul string) *log.Logger {
-	logger := log.New()
+type Logger struct {
+
+}
+
+func New(module string) *logrus.Logger {
+	logger := logrus.New()
 	// Log as JSON instead of the default ASCII formatter.
-	logger.Formatter = &log.JSONFormatter{}
+	logger.Formatter = &ApacheFormatter{}
 
 	// Output to stdout instead of the default stderr
 	// Can be any io.Writer, see below for File example
-	logger.SetOutput(os.Stdout)
+	logger.Out = os.Stdout
 
 	// Only log the warning severity or above.
-	logger.SetLevel(log.InfoLevel)
+	logger.SetLevel(logrus.InfoLevel)
+	logger.WithFields(logrus.Fields{FieldKeyModule: module})
+
 	return logger
 }
